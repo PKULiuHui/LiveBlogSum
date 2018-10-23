@@ -4,6 +4,5 @@
 */.DS_Store
 .ftpconfig
 data/
-baseline/
 mate-tool/
 word2vec/
