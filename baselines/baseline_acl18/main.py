@@ -15,7 +15,7 @@ import re
 import sys
 import os, json, argparse, random
 
-sys.path.append('../')
+sys.path.append('../../')
 from myrouge.rouge import get_rouge_score
 
 parser = argparse.ArgumentParser(description='ACL18 Summarization')
@@ -27,17 +27,17 @@ parser.add_argument('-hidden_size', type=int, default=256)
 parser.add_argument('-teacher_forcing', type=float, default=0.0)
 parser.add_argument('-lr', type=float, default=1e-3)
 parser.add_argument('-max_norm', type=float, default=5.0)
-parser.add_argument('-sent_dropout', type=float, default=0.0)
-parser.add_argument('-doc_dropout', type=float, default=0.0)
+parser.add_argument('-sent_dropout', type=float, default=0.3)
+parser.add_argument('-doc_dropout', type=float, default=0.2)
 parser.add_argument('-sent_trunc', type=int, default=30)
 parser.add_argument('-alpha', type=float, default=20.0)
-parser.add_argument('-epochs', type=int, default=10)
+parser.add_argument('-epochs', type=int, default=8)
 parser.add_argument('-seed', type=int, default=1)
-parser.add_argument('-embedding', type=str, default='../word2vec/embedding.npz')
-parser.add_argument('-word2id', type=str, default='../word2vec/word2id.json')
-parser.add_argument('-train_dir', type=str, default='../data/bbc_acl/train/')
-parser.add_argument('-valid_dir', type=str, default='../data/bbc_acl/test/')
-parser.add_argument('-test_dir', type=str, default='../data/bbc_acl/test/')
+parser.add_argument('-embedding', type=str, default='../../word2vec/embedding.npz')
+parser.add_argument('-word2id', type=str, default='../../word2vec/word2id.json')
+parser.add_argument('-train_dir', type=str, default='../../data/bbc_acl/train/')
+parser.add_argument('-valid_dir', type=str, default='../../data/bbc_acl/test/')
+parser.add_argument('-test_dir', type=str, default='../../data/bbc_acl/test/')
 parser.add_argument('-valid_every', type=int, default=500)
 parser.add_argument('-load_model', type=str, default='')
 parser.add_argument('-sum_len', type=int, default=1)  # 摘要长度为原摘要长度的倍数
@@ -103,7 +103,7 @@ def train():
                 cur_loss, r1, r2, rl, rsu = evaluate(net, vocab, val_data, True)
                 if cur_loss < min_loss:
                     min_loss = cur_loss
-                save_path = args.save_dir + 'RNN_GCN' + '_%d_%.4f_%.4f_%.4f_%.4f_%.4f' % (
+                save_path = args.save_dir + 'ACL_18' + '_%d_%.4f_%.4f_%.4f_%.4f_%.4f' % (
                     cnt / args.valid_every, cur_loss, r1, r2, rl, rsu)
                 net.save(save_path)
                 print('Epoch: %2d Min_Val_Loss: %f Cur_Val_Loss: %f Rouge-1: %f Rouge-2: %f Rouge-l: %f Rouge-SU4: %f' %

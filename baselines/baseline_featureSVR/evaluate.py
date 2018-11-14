@@ -4,11 +4,12 @@
 
 import sys
 
-sys.path.append('../')
+sys.path.append('../../')
 import json
 import re
 import os
 import math
+import numpy as np
 from myrouge.rouge import get_rouge_score
 from tqdm import tqdm
 
@@ -18,11 +19,9 @@ test_data = []
 test_pre = []
 corpus = 'bbc'
 label_method = 'cont_1'
-valid_dir = '../data/' + corpus + '_' + label_method + '/valid/'
-test_dir = '../data/' + corpus + '_' + label_method + '/test/'
-blog_trunc = 80  # live blog只保留前80个doc
+valid_dir = '../../data/' + corpus + '_' + label_method + '/valid/'
+test_dir = '../../data/' + corpus + '_' + label_method + '/test/'
 pre_dir = './data/' + corpus + '/'
-candidate_num = 3  # 得分前15的句子作为候选
 mmr = 0.75
 
 
@@ -33,8 +32,6 @@ class Blog:
         self.docs = []
         self.scores = []
         for i, doc in enumerate(blog_json['documents']):
-            if i >= blog_trunc:
-                break
             self.docs.append(doc['text'])
             self.scores.append(doc['sent_label'])
 
@@ -74,33 +71,19 @@ def rouge_1_f(hyp, ref):
 
 # 第二种re_rank方法，使用MMR去冗余策略
 def re_rank(sents, scores, ref_len):
-    sents_num = len(sents)
-    sim = [sents_num * [.0] for _ in range(0, sents_num)]
-    for i in range(0, sents_num):
-        for j in range(i, sents_num):
-            if j == i:
-                sim[i][j] = 1.0
-            else:
-                sim[i][j] = sim[j][i] = rouge_1_f(sents[i], sents[j])
-    chosen = []
-    candidates = range(0, sents_num)
     summary = ''
+    chosen = []
+    cur_scores = [s for s in scores]
     cur_len = 0
-    while len(candidates) != 0:
-        max_point = -1e20
-        next = -1
-        for i in candidates:
-            max_sim = .0
-            for j in chosen:
-                max_sim = max(max_sim, sim[i][j])
-            cur_point = mmr * scores[i] - (1 - mmr) * max_sim
-            if cur_point > max_point:
-                max_point = cur_point
-                next = i
-        chosen.append(next)
-        candidates.remove(next)
-        tmp = sents[next]
-        tmp = tmp.split()
+    while len(chosen) <= len(scores):
+        sorted_idx = np.array(cur_scores).argsort()
+        cur_idx = sorted_idx[-1]
+        for i in range(len(cur_scores)):
+            new_score = mmr * scores[i] - (1 - mmr) * rouge_1_f(sents[i], sents[cur_idx])
+            cur_scores[i] = min(cur_scores[i], new_score)
+        cur_scores[cur_idx] = -1e20
+        chosen.append(cur_idx)
+        tmp = sents[cur_idx].split()
         tmp_len = len(tmp)
         if cur_len + tmp_len > ref_len:
             summary += ' '.join(tmp[:ref_len - cur_len])
@@ -108,7 +91,7 @@ def re_rank(sents, scores, ref_len):
         else:
             summary += ' '.join(tmp) + ' '
             cur_len += tmp_len
-    return summary
+    return summary.strip()
 
 
 def main():
@@ -127,7 +110,7 @@ def main():
     with open(pre_dir + 'test_pre.txt', 'r') as f:
         for line in f.readlines():
             test_pre.append(float(line))
-    """
+
     print('Evaluating valid set...')
     r1, r2, rl, rsu = .0, .0, .0, .0
     start = 0
@@ -151,7 +134,7 @@ def main():
     rl = rl / blog_num
     rsu = rsu / blog_num
     print(r1, r2, rl, rsu)
-    """
+
     print('Evaluating test set...')
     r1, r2, rl, rsu = .0, .0, .0, .0
     start = 0

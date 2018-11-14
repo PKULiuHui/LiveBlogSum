@@ -14,12 +14,12 @@ from Dataset import Dataset
 from RNN_RNN import RNN_RNN
 import os, json, argparse, random
 
-sys.path.append('../')
+sys.path.append('../../')
 from myrouge.rouge import get_rouge_score
 
 parser = argparse.ArgumentParser(description='SummaRuNNer')
 # model
-parser.add_argument('-save_dir', type=str, default='checkpoints2/')
+parser.add_argument('-save_dir', type=str, default='checkpoints1/')
 parser.add_argument('-embed_dim', type=int, default=100)
 parser.add_argument('-embed_num', type=int, default=100)
 parser.add_argument('-hidden_size', type=int, default=200)
@@ -30,19 +30,19 @@ parser.add_argument('-seg_num', type=int, default=10)
 parser.add_argument('-lr', type=float, default=1e-3)
 parser.add_argument('-max_norm', type=float, default=5.0)
 parser.add_argument('-batch_size', type=int, default=5)
-parser.add_argument('-epochs', type=int, default=10)
+parser.add_argument('-epochs', type=int, default=8)
 parser.add_argument('-seed', type=int, default=1)
-parser.add_argument('-embedding', type=str, default='../word2vec/embedding.npz')
-parser.add_argument('-word2id', type=str, default='../word2vec/word2id.json')
-parser.add_argument('-train_dir', type=str, default='../data/bbc_opt/train/')
-parser.add_argument('-valid_dir', type=str, default='../data/bbc_opt/test/')
+parser.add_argument('-embedding', type=str, default='../../word2vec/embedding.npz')
+parser.add_argument('-word2id', type=str, default='../../word2vec/word2id.json')
+parser.add_argument('-train_dir', type=str, default='../../data/bbc_opt/train/')
+parser.add_argument('-valid_dir', type=str, default='../../data/bbc_opt/test/')
 parser.add_argument('-sent_trunc', type=int, default=20)
 parser.add_argument('-doc_trunc', type=int, default=10)
 parser.add_argument('-blog_trunc', type=int, default=80)
 parser.add_argument('-valid_every', type=int, default=100)
 # test
 parser.add_argument('-load_model', type=str, default='')
-parser.add_argument('-test_dir', type=str, default='../data/bbc_opt/test/')
+parser.add_argument('-test_dir', type=str, default='../../data/bbc_opt/test/')
 parser.add_argument('-ref', type=str, default='outputs/ref/')
 parser.add_argument('-hyp', type=str, default='outputs/hyp/')
 parser.add_argument('-sum_len', type=int, default=1)  # 摘要长度为原摘要长度的倍数
@@ -90,33 +90,19 @@ def rouge_1_f(hyp, ref):
 
 # 得到预测分数后，使用MMR策略进行重新排序，以消除冗余
 def re_rank(sents, scores, ref_len):
-    sents_num = len(sents)
-    sim = [sents_num * [.0] for _ in range(0, sents_num)]
-    for i in range(0, sents_num):
-        for j in range(i, sents_num):
-            if j == i:
-                sim[i][j] = 1.0
-            else:
-                sim[i][j] = sim[j][i] = rouge_1_f(sents[i], sents[j])
-    chosen = []
-    candidates = range(0, sents_num)
     summary = ''
+    chosen = []
+    cur_scores = [s for s in scores]
     cur_len = 0
-    while len(candidates) != 0:
-        max_point = -1e20
-        next = -1
-        for i in candidates:
-            max_sim = .0
-            for j in chosen:
-                max_sim = max(max_sim, sim[i][j])
-            cur_point = args.mmr * scores[i] - (1.0 - args.mmr) * max_sim
-            if cur_point > max_point:
-                max_point = cur_point
-                next = i
-        chosen.append(next)
-        candidates.remove(next)
-        tmp = sents[next]
-        tmp = tmp.split()
+    while len(chosen) <= len(scores):
+        sorted_idx = np.array(cur_scores).argsort()
+        cur_idx = sorted_idx[-1]
+        for i in range(len(cur_scores)):
+            new_score = args.mmr * scores[i] - (1 - args.mmr) * rouge_1_f(sents[i], sents[cur_idx])
+            cur_scores[i] = min(cur_scores[i], new_score)
+        cur_scores[cur_idx] = -1e20
+        chosen.append(cur_idx)
+        tmp = sents[cur_idx].split()
         tmp_len = len(tmp)
         if cur_len + tmp_len > ref_len:
             summary += ' '.join(tmp[:ref_len - cur_len])
@@ -124,7 +110,7 @@ def re_rank(sents, scores, ref_len):
         else:
             summary += ' '.join(tmp) + ' '
             cur_len += tmp_len
-    return summary
+    return summary.strip()
 
 
 # 在验证集或测试集上测loss, rouge值

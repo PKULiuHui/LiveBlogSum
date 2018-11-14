@@ -17,11 +17,10 @@ train_data = []
 valid_data = []
 test_data = []
 corpus = 'bbc'
-train_dir = '../data/' + corpus + '_cont_1/train/'
-valid_dir = '../data/' + corpus + '_cont_1/valid/'
-test_dir = '../data/' + corpus + '_cont_1/test/'
+train_dir = '../../data/' + corpus + '_cont_1/train/'
+valid_dir = '../../data/' + corpus + '_cont_1/valid/'
+test_dir = '../../data/' + corpus + '_cont_1/test/'
 out_dir = './data/' + corpus + '/'
-blog_trunc = 80  # live blog只保留前80个doc
 if os.path.exists(out_dir):
     os.system('rm -r ' + out_dir)
 os.mkdir(out_dir)
@@ -35,8 +34,6 @@ class Blog:
         self.docs = []
         self.scores = []
         for i, doc in enumerate(blog_json['documents']):
-            if i >= blog_trunc:
-                break
             self.docs.append(doc['text'])
             self.scores.append(doc['sent_label'])
 

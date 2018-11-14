@@ -7,7 +7,7 @@ import json
 
 word2id_f = './word2vec/word2id.json'
 word2id = {}
-data_dir = './data/bbc_label/'
+data_dir = './data/bbc_new/'
 types = ['train', 'valid', 'test']
 
 

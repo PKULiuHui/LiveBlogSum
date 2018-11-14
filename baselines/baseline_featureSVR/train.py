@@ -4,14 +4,12 @@
 
 import os
 import json
-from sklearn import linear_model
 from sklearn.svm import LinearSVR
 
 
 corpus = 'bbc'
 label_method = 'cont_1'
-train_label_dir = '../data/' + corpus + '_' + label_method + '/train/'
-blog_trunc = 80
+train_label_dir = '../../data/' + corpus + '_' + label_method + '/train/'
 feature_dir = './data/' + corpus + '/'
 
 
@@ -22,8 +20,6 @@ class Blog:
         self.docs = []
         self.scores = []
         for i, doc in enumerate(blog_json['documents']):
-            if i >= blog_trunc:
-                break
             self.docs.append(doc['text'])
             self.scores.append(doc['sent_label'])
 
