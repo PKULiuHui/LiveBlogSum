@@ -1,19 +1,25 @@
 # coding:utf-8
-import torch
-from torch.nn.utils import clip_grad_norm_
-from myrouge.rouge import get_rouge_score
-import torch.nn.functional as F
-from tqdm import tqdm
-import numpy as np
-import math
-import re
-import utils
-import model
-import os, json, argparse, random
 
-parser = argparse.ArgumentParser(description='LiveBlogSum')
+# 分阶段训练，先训练SRL打分部分，然后再训练句子打分部分
+import argparse
+import json
+import math
+import os
+import random
+import re
+import numpy as np
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.nn.utils import clip_grad_norm_
+from tqdm import tqdm
+import model
+import utils
+from myrouge.rouge import get_rouge_score
+
+parser = argparse.ArgumentParser(description='LiveBlogSum(pretrain)')
 # model paras
-parser.add_argument('-model', type=str, default='Model5')
+parser.add_argument('-model', type=str, default='Model3')
 parser.add_argument('-embed_frozen', type=bool, default=False)
 parser.add_argument('-embed_dim', type=int, default=100)
 parser.add_argument('-embed_num', type=int, default=100)
@@ -24,13 +30,12 @@ parser.add_argument('-pos_sent_size', type=int, default=20)  # sent的相对位�
 parser.add_argument('-sum_len', type=int, default=1)
 parser.add_argument('-mmr', type=float, default=0.75)
 # train paras
-parser.add_argument('-save_dir', type=str, default='checkpoints2/')
+parser.add_argument('-save_dir', type=str, default='checkpoints6/')
 parser.add_argument('-lr', type=float, default=1e-3)
 parser.add_argument('-lr_decay', type=float, default=0.5)
 parser.add_argument('-max_norm', type=float, default=5.0)
-parser.add_argument('-srl_ratio', type=float, default=0.15)
-parser.add_argument('-teacher_forcing', type=float, default=0.0)
-parser.add_argument('-epochs', type=int, default=8)
+parser.add_argument('-srl_epochs', type=int, default=4)  # 训练SRL打分的轮数
+parser.add_argument('-sent_epochs', type=int, default=6)  # 训练句子打分的轮数
 parser.add_argument('-seed', type=int, default=1)
 parser.add_argument('-sent_trunc', type=int, default=25)
 parser.add_argument('-valid_every', type=int, default=500)
@@ -105,19 +110,12 @@ def mmr(sents, scores, ref_len):
     return summary.strip()
 
 
-def adjust_learning_rate(optimizer, epoch):
-    lr = args.lr * (args.lr_decay ** epoch)
-    for param_group in optimizer.param_groups:
-        param_group['lr'] = lr
-
-
 # 在验证集或测试集上测loss, rouge值
 def evaluate(net, my_loss, vocab, data_iter, train_next):  # train_next指明接下来是否要继续训练
     net.eval()
     my_loss.eval()
     loss, r1, r2, rl, rsu = .0, .0, .0, .0, .0
     blog_num = float(len(data_iter))
-    f = open('tmp.txt', 'w')
     for i, blog in enumerate(tqdm(data_iter)):
         sents, sent_targets, doc_lens, doc_targets, events, event_targets, event_tfs, event_prs, event_lens, event_sent_lens, sents_content, summary = vocab.make_tensors(
             blog, args)
@@ -127,17 +125,8 @@ def evaluate(net, my_loss, vocab, data_iter, train_next):  # train_next指明接
             events = events.cuda()
             event_targets = event_targets.cuda()
             event_tfs = event_tfs.cuda()
-        # sent_probs = net(sents, doc_lens)
-        sent_probs, event_probs = net(sents, doc_lens, events, event_lens, event_sent_lens, event_tfs, event_targets, sent_targets, False)
-
-        loss += F.mse_loss(event_probs, event_targets).data.item()
-        for a, b in zip(event_probs, event_targets):
-            f.write(str(a.data.item()) + '\t' + str(b.data.item()) + '\n')
-        f.write('\n')
-
-        # loss += my_loss(sent_probs, sent_targets).data.item()
-        # loss += my_loss(sent_probs, event_probs, sent_targets, event_targets).data.item()
-        # loss += my_loss(sent_probs, doc_probs, event_probs, sent_targets, doc_targets, event_targets).data.item()
+        sent_probs, event_probs = net(sents, doc_lens, events, event_lens, event_sent_lens, event_tfs, False)
+        loss += my_loss(sent_probs, event_probs, sent_targets, event_targets).data.item()
         probs = sent_probs.tolist()
         ref = summary.strip()
         ref_len = len(ref.split())
@@ -147,7 +136,7 @@ def evaluate(net, my_loss, vocab, data_iter, train_next):  # train_next指明接
         r2 += score['ROUGE-2']['r']
         rl += score['ROUGE-L']['r']
         rsu += score['ROUGE-SU4']['r']
-    f.close()
+
     loss = loss / blog_num
     r1 = r1 / blog_num
     r2 = r2 / blog_num
@@ -157,6 +146,55 @@ def evaluate(net, my_loss, vocab, data_iter, train_next):  # train_next指明接
         net.train()
         my_loss.train()
     return loss, r1, r2, rl, rsu
+
+
+def evaluate_srl(net, my_loss, vocab, data_iter):
+    net.eval()
+    my_loss.eval()
+    p_5, p_10, p_20, mse = .0, .0, .0, .0
+    blog_num = float(len(data_iter))
+    for i, blog in enumerate(tqdm(data_iter)):
+        sents, sent_targets, doc_lens, doc_targets, events, event_targets, event_tfs, event_prs, event_lens, event_sent_lens, sents_content, summary = vocab.make_tensors(
+            blog, args)
+        if use_cuda:
+            sents = sents.cuda()
+            events = events.cuda()
+            event_targets = event_targets.cuda()
+            event_tfs = event_tfs.cuda()
+        event_probs = net(sents, doc_lens, events, event_lens, event_sent_lens, event_tfs, True)
+        mse += F.mse_loss(event_probs, event_targets).data.item()
+        event_targets = event_targets.detach().cpu()
+        event_probs = event_probs.detach().cpu()
+        idx1 = np.array(event_probs).argsort().tolist()
+        idx1.reverse()
+        hit = .0
+        for i in idx1[:5]:
+            if event_targets[i] > 0.00001:
+                hit += 1
+        p_5 += hit / 5
+        hit = .0
+        for i in idx1[:10]:
+            if event_targets[i] > 0.00001:
+                hit += 1
+        p_10 += hit / 10
+        hit = .0
+        for i in idx1[:20]:
+            if event_targets[i] > 0.00001:
+                hit += 1
+        p_20 += hit / 20
+
+    p_5 = p_5 / blog_num
+    p_10 = p_10 / blog_num
+    p_20 = p_20 / blog_num
+    mse = mse / blog_num
+    net.train()
+    return p_5, p_10, p_20, mse
+
+
+def adjust_learning_rate(optimizer, epoch):
+    lr = args.lr * (args.lr_decay ** epoch)
+    for param_group in optimizer.param_groups:
+        param_group['lr'] = lr
 
 
 def train():
@@ -185,14 +223,51 @@ def train():
         f.close()
 
     net = getattr(model, args.model)(args, embed)
-    my_loss = getattr(model, 'myLoss2')()
+    loss1 = getattr(model, 'hinge_loss_1')()
+    loss2 = getattr(model, 'myLoss2')()  # 训练SRL和句子打分阶段的loss
     if use_cuda:
         net.cuda()
-        my_loss.cuda()
+        loss1.cuda()
+        loss2.cuda()
     optimizer = torch.optim.Adam(net.parameters(), lr=args.lr)
     net.train()
 
-    for epoch in range(1, args.epochs + 1):
+    # 训练SRL打分
+    print('Begin train SRL predictor...')
+    for epoch in range(1, args.srl_epochs + 1):
+        for i, blog in enumerate(train_data):
+            sents, sent_targets, doc_lens, doc_targets, events, event_targets, event_tfs, event_prs, event_lens, event_sent_lens, _1, _2, = vocab.make_tensors(
+                blog, args)
+            if use_cuda:
+                sents = sents.cuda()
+                events = events.cuda()
+                event_targets = event_targets.cuda()
+                event_tfs = event_tfs.cuda()
+            event_probs = net(sents, doc_lens, events, event_lens, event_sent_lens, event_tfs, True)
+            loss = loss1(event_probs, event_targets)
+            optimizer.zero_grad()
+            if loss.data.item() > 1e-10:
+                loss.backward()
+            clip_grad_norm_(net.parameters(), args.max_norm)
+            optimizer.step()
+
+            print('SRL EPOCH [%d/%d]: BATCH_ID=[%d/%d] loss=%f' % (
+                epoch, args.srl_epochs, i, len(train_data), loss))
+
+            cnt = (epoch - 1) * len(train_data) + i
+            if cnt % args.valid_every == 0 and cnt / args.valid_every >= 0:
+                print('Begin SRL valid...Epoch %d, Batch %d' % (epoch, i))
+                p_5, p_10, p_20, mse = evaluate_srl(net, loss1, vocab, val_data)
+                save_path = args.save_dir + args.model + '_SRL_%d_%.4f_%.4f_%.4f_%.4f' % (
+                cnt / args.valid_every, p_5, p_10, p_20, mse)
+                net.save(save_path)
+                print('Epoch: %2d Loss: %f' % (epoch, loss))
+        adjust_learning_rate(optimizer, epoch)
+    """
+    # 训练句子打分
+    print('Begin train sent predictor...')
+    adjust_learning_rate(optimizer, 0)
+    for epoch in range(1, args.sent_epochs + 1):
         for i, blog in enumerate(train_data):
             sents, sent_targets, doc_lens, doc_targets, events, event_targets, event_tfs, event_prs, event_lens, event_sent_lens, _1, _2, = vocab.make_tensors(
                 blog, args)
@@ -202,27 +277,25 @@ def train():
                 events = events.cuda()
                 event_targets = event_targets.cuda()
                 event_tfs = event_tfs.cuda()
-            # sent_probs = net(sents, doc_lens)
-            sent_probs, event_probs = net(sents, doc_lens, events, event_lens, event_sent_lens, event_tfs, event_targets, sent_targets, True)
-            # loss = my_loss(sent_probs, sent_targets)
-            loss = my_loss(sent_probs, event_probs, sent_targets, event_targets)
-            # loss = my_loss(sent_probs, doc_probs, event_probs, sent_targets, doc_targets, event_targets)
+            sent_probs, event_probs = net(sents, doc_lens, events, event_lens, event_sent_lens, event_tfs, False)
+            loss = loss2(sent_probs, event_probs, sent_targets, event_targets)
             optimizer.zero_grad()
             loss.backward()
             clip_grad_norm_(net.parameters(), args.max_norm)
             optimizer.step()
-            print('EPOCH [%d/%d]: BATCH_ID=[%d/%d] loss=%f' % (epoch, args.epochs, i, len(train_data), loss))
+            print('SENT EPOCH [%d/%d]: BATCH_ID=[%d/%d] loss=%f' % (epoch, args.sent_epochs, i, len(train_data), loss))
 
             cnt = (epoch - 1) * len(train_data) + i
             if cnt % args.valid_every == 0 and cnt / args.valid_every > 0:
                 print('Begin valid... Epoch %d, Batch %d' % (epoch, i))
-                cur_loss, r1, r2, rl, rsu = evaluate(net, my_loss, vocab, val_data, True)
-                save_path = args.save_dir + args.model + '_%d_%.4f_%.4f_%.4f_%.4f_%.4f' % (
+                cur_loss, r1, r2, rl, rsu = evaluate(net, loss2, vocab, val_data, True)
+                save_path = args.save_dir + args.model + '_SENT_%d_%.4f_%.4f_%.4f_%.4f_%.4f' % (
                     cnt / args.valid_every, cur_loss, r1, r2, rl, rsu)
                 net.save(save_path)
-                print('Epoch: %2d Cur_Val_Loss: %f Rouge-1: %f Rouge-2: %f Rouge-l: %f Rouge-SU4: %f' %
-                      (epoch, cur_loss, r1, r2, rl, rsu))
+                print('Epoch: %2d Loss: %f Rouge-1: %f Rouge-2: %f Rouge-l: %f Rouge-SU4: %f' % (
+                    epoch, cur_loss, r1, r2, rl, rsu))
         adjust_learning_rate(optimizer, epoch)
+    """
 
 
 def test():

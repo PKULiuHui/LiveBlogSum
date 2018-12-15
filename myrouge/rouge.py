@@ -45,8 +45,10 @@ def get_rouge_score(hyp, ref):
                     score[m]['p'] = float(line.split()[3])
                 if 'Average_F' in line:
                     score[m]['f'] = float(line.split()[3])
-    os.system('rm -r %s' % hyp_dir)
-    os.system('rm -r %s' % ref_dir)
+    if os.path.exists(hyp_dir):
+        os.system('rm -r %s' % hyp_dir)
+    if os.path.exists(ref_dir):
+        os.system('rm -r %s' % ref_dir)
     return score
 
 

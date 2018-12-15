@@ -1,5 +1,6 @@
 # coding:utf-8
 import torch
+import numpy as np
 
 
 class Vocab:
@@ -60,11 +61,13 @@ class Vocab:
         events = []  # 存储所有events，即SRL四元组
         event_targets = []  # 存储各events得分，该得分和摘要events计算而得
         event_tfs = []  # 存储各events TF值
+        event_prs = []  # 存储各events PageRank值
         event_lens = []  # 存储每个doc包含的events数目
         event_sent_lens = []  # 存储每个句子包含的events数目
 
         for doc in blog['documents']:
             cur_len = 0
+            cur_pr = []
             for sent_events in doc['events']:
                 cur_len += len(sent_events)
                 event_sent_lens.append(len(sent_events))
@@ -72,6 +75,10 @@ class Vocab:
                     events.append(event['tuple'])
                     event_targets.append(event['score'])
                     event_tfs.append(event['tf'])
+                    cur_pr.append(event['pr'])
+            norm = np.array(cur_pr).sum()
+            cur_pr = [t * norm for t in cur_pr]
+            event_prs.extend(cur_pr)
             event_lens.append(cur_len)
         for i, event in enumerate(events):
             event = event.replace('-', self.PAD_TOKEN)
@@ -82,5 +89,7 @@ class Vocab:
         events = torch.LongTensor(events)
         event_targets = torch.FloatTensor(event_targets)
         event_tfs = torch.FloatTensor(event_tfs)
+        event_prs = torch.FloatTensor(event_prs)
+        # event_sim_matrix = torch.FloatTensor(blog["sim_matrix"])
 
-        return sents, sents_target, doc_lens, doc_targets, events, event_targets, event_tfs, event_lens, event_sent_lens, sents_content, summary
+        return sents, sents_target, doc_lens, doc_targets, events, event_targets, event_tfs, event_prs, event_lens, event_sent_lens, sents_content, summary

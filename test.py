@@ -1,35 +1,66 @@
 # coding: utf-8
 
-# 检验live blog中对应预训练embedding的比例，结果有96.7%的词都对应有与训练embedding
+# 检验live blog srl预测分数和真是分数的区别
 
-import os
-import json
+import numpy as np
+import torch
+import torch.nn.functional as F
 
-word2id_f = './word2vec/word2id.json'
-word2id = {}
-data_dir = './data/bbc_new/'
-types = ['train', 'valid', 'test']
+path = 'tmp1.txt'
+srl_pre = []
+srl_tgt = []
+
+
+def compute(srl_pre, srl_tgt):
+    p_5, p_10, p_20 = .0, .0, .0
+    mse = .0
+    for pre, tgt in zip(srl_pre, srl_tgt):
+        mse += F.mse_loss(torch.FloatTensor(pre), torch.FloatTensor(tgt)).data.item()
+        idx1 = np.array(pre).argsort().tolist()
+        idx1.reverse()
+        hit = .0
+        for i in idx1[:5]:
+            if tgt[i] > 0.00001:
+                hit += 1
+        p_5 += hit / 5
+        hit = .0
+        for i in idx1[:10]:
+            if tgt[i] > 0.00001:
+                hit += 1
+        p_10 += hit / 10
+        hit = .0
+        for i in idx1[:20]:
+            if tgt[i] > 0.00001:
+                hit += 1
+        p_20 += hit / 20
+    p_5 /= len(srl_pre)
+    p_10 /= len(srl_pre)
+    p_20 /= len(srl_pre)
+    mse /= len(srl_pre)
+    return p_5, p_10, p_20, mse
 
 
 def main():
-    with open(word2id_f, 'r') as f:
-        word2id = json.load(f)
-    print(len(word2id))
-    all_cnt = .0
-    hit_cnt = .0
-    for t in types:
-        print(t)
-        cur_dir = data_dir + t + '/'
-        for fn in os.listdir(cur_dir):
-            cur_f = open(cur_dir + fn, 'r')
-            blog = json.load(cur_f)
-            for doc in blog['documents']:
-                for sent in doc['text']:
-                    for word in sent.strip().split():
-                        all_cnt += 1
-                        if word in word2id:
-                            hit_cnt += 1
-    print(hit_cnt / all_cnt)
+    with open(path, 'r') as f:
+        for blog in f.read().strip().split('\n\n'):
+            cur_pre, cur_tgt = [], []
+            for line in blog.strip().split('\n'):
+                if len(line.split('\t')) != 2:
+                    continue
+                try:
+                    cur_pre.append(float(line.split('\t')[0]))
+                    cur_tgt.append(float(line.split('\t')[1]))
+                except:
+                    print('error')
+                    print(line)
+                    exit()
+            srl_pre.append(cur_pre)
+            srl_tgt.append(cur_tgt)
+    p_5, p_10, p_20, mse = compute(srl_pre, srl_tgt)
+    print 'P@5:', p_5
+    print 'P@10:', p_10
+    print 'P@20:', p_20
+    print 'mse_loss:', mse
 
 
 if __name__ == '__main__':

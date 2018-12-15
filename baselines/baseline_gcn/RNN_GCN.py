@@ -27,7 +27,7 @@ class RNN_GCN(nn.Module):
             batch_first=True,
         )
 
-        # 每一层都会有不同的权重矩阵，所以组织成列表
+        # 每一层都会有不同的权重矩阵
         self.graph_w_0 = nn.Parameter(torch.FloatTensor(self.H, self.H).uniform_(-0.1, 0.1))
         self.graph_w_1 = nn.Parameter(torch.FloatTensor(self.H, self.H).uniform_(-0.1, 0.1))
         self.graph_w_2 = nn.Parameter(torch.FloatTensor(self.H, self.H).uniform_(-0.1, 0.1))
